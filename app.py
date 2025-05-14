@@ -2,11 +2,14 @@ import streamlit as st
 import tensorflow as tf
 from PIL import Image, ImageOps
 import numpy as np
+from streamlit_cropper import st_cropper # Import the cropper component
 
 # Function to load the model (cached for performance)
 @st.cache_resource
 def load_model():
     try:
+        # Ensure the model file 'mnist_model.keras' is in the same directory
+        # as your Streamlit script, or provide the correct path.
         model = tf.keras.models.load_model('mnist_model.keras')
         return model
     except Exception as e:
@@ -17,9 +20,8 @@ def load_model():
 # Load the model when the app starts
 model = load_model()
 
-st.title("Handwritten Digit Recognizer")
-st.write("Upload an image of a handwritten digit (0-9).")
-st.write("For best results, use a clear image of a single digit.")
+st.title("Handwritten Digit Recognizer with Manual Crop")
+st.write("Upload an image, crop the digit using the interactive box, and get a prediction.")
 
 uploaded_file = st.file_uploader("Choose an image...", type=["png", "jpg", "jpeg"])
 
@@ -27,72 +29,87 @@ uploaded_file = st.file_uploader("Choose an image...", type=["png", "jpg", "jpeg
 if model is None:
     st.stop()
 
+# Initialize cropped_image variable
+cropped_image = None
+
 if uploaded_file is not None:
     try:
-        # Open the image and convert to grayscale
-        image = Image.open(uploaded_file).convert('L')
+        # Open the uploaded image
+        img = Image.open(uploaded_file)
 
-        # Display the uploaded image
-        st.image(image, caption='Uploaded Image.', use_container_width=True)
+        st.write("Adjust the box below to crop the digit:")
 
-        # Add a button to trigger prediction
-        if st.button('Predict'):
-            with st.spinner('Predicting...'):
-                # --- Preprocessing Steps ---
+        # --- Add the st_cropper component ---
+        # Replace the initial st.image display with the cropper
+        cropped_image = st_cropper(
+            img,
+            realtime_update=True, # Show updates as you drag the box
+            box_color='#00F0FF', # Color of the cropping box
+            aspect_ratio=(1,1), # Encourage user to select a square region
+            return_type='image', # Return a PIL Image object
+            key='digit_cropper'  # Unique key for the component
+        )
+        # --- End of cropper component ---
 
-                # 1. Convert image to grayscale (already done, but good practice)
-                #    image = image.convert('L')
+        # Display the cropped image preview returned by the component
+        # This will update as the user interacts with the cropper
+        if cropped_image: # Check if the cropper has returned an image
+            st.write("Preview of the selected crop:")
+            st.image(cropped_image, use_container_width=True) # Display the cropped image
 
-                # 2. Pad the image to make it square while preserving aspect ratio
-                width, height = image.size
-                max_side = max(width, height)
+            # Add the Predict button here, visible only after an image is cropped
+            if st.button('Predict Cropped Digit'):
+                with st.spinner('Predicting...'):
+                    # --- Preprocessing Steps for the CROPPED Image ---
 
-                # Create a new square image with a black background (pixel value 0)
-                # MNIST has black background and white digits.
-                # If your digits are black on white, you might use white background (255)
-                # or handle inversion later. Let's stick to black background for MNIST compatibility.
-                padded_image = Image.new('L', (max_side, max_side), 0) # 0 for black background
+                    # 1. Convert the cropped image to grayscale (if it's not already)
+                    #    st_cropper usually returns RGB, so this is necessary.
+                    cropped_image_gray = cropped_image.convert('L')
 
-                # Calculate the position to paste the original image onto the center
-                x_offset = (max_side - width) // 2
-                y_offset = (max_side - height) // 2
+                    # 2. Resize the grayscale cropped image to 28x28 pixels
+                    #    The model requires this specific input size.
+                    img_resized = cropped_image_gray.resize((28, 28))
 
-                # Paste the original image onto the center of the padded square image
-                padded_image.paste(image, (x_offset, y_offset))
+                    # 3. Convert image to numpy array
+                    img_array = np.array(img_resized)
 
-                # 3. Resize the padded square image to 28x28 pixels
-                img_resized = padded_image.resize((28, 28))
+                    # 4. Invert colors if needed (typical for black digit on white background crops)
+                    #    MNIST model expects white digits on a black background.
+                    #    If your cropped digit is black on white, UNCOMMENT this:
+                    img_array = 255 - img_array # <--- UNCOMMENTED for typical black-on-white crops
 
-                # 4. Convert image to numpy array
-                img_array = np.array(img_resized)
+                    # --- Optional Debugging: Display the 28x28 image fed to the model ---
+                    # Convert the numpy array back to a PIL Image (scaling back to 0-255)
+                    # img_for_display = Image.fromarray((img_array * 255).astype(np.uint8))
+                    # st.subheader("Image fed to the model (28x28):")
+                    # Use a small fixed width for display as it's tiny
+                    # st.image(img_for_display, width=100, caption="Processed Image (should be white digit on black)")
+                    # --------------------------------------------------------------------
 
-                # 5. Invert colors if the digits are black on white
-                #    MNIST model expects white digits on a black background.
-                #    If your drawing results in black digits on a white background, uncomment this:
-                # img_array = 255 - img_array
 
-                # 6. Normalize the image (scale pixel values to 0-1)
-                img_array = img_array.astype("float32") / 255.0
+                    # 5. Normalize the image (scale pixel values to 0-1)
+                    img_array = img_array.astype("float32") / 255.0
 
-                # 7. Reshape for the model (1, 28, 28, 1)
-                #    (Batch size 1, 28x28 pixels, 1 channel for grayscale)
-                img_array_reshaped = np.expand_dims(img_array, axis=0)
-                img_array_reshaped = np.expand_dims(img_array_reshaped, axis=-1)
+                    # 6. Reshape for the model (1, 28, 28, 1)
+                    #    (Batch size 1, 28x28 pixels, 1 channel for grayscale)
+                    img_array_reshaped = np.expand_dims(img_array, axis=0)
+                    img_array_reshaped = np.expand_dims(img_array_reshaped, axis=-1)
 
-                # --- Prediction ---
-                prediction = model.predict(img_array_reshaped)
-                digit = np.argmax(prediction)
-                confidence = np.max(prediction)
 
-                # --- Display Results ---
-                st.success(f"Predicted Digit: **{digit}**")
-                st.write(f"Confidence: **{confidence:.2f}**")
-                st.subheader("Prediction Probabilities:")
-                st.bar_chart(prediction[0])
+                    # --- Prediction ---
+                    prediction = model.predict(img_array_reshaped)
+                    digit = np.argmax(prediction)
+                    confidence = np.max(prediction)
+
+                    # --- Display Results ---
+                    st.success(f"Predicted Digit: **{digit}**")
+                    st.write(f"Confidence: **{confidence:.2f}**")
+                    st.subheader("Prediction Probabilities:")
+                    st.bar_chart(prediction[0])
 
     except Exception as e:
         st.error(f"An error occurred during image processing or prediction: {e}")
         st.error("Please ensure the uploaded file is a valid image.")
 
 else:
-    st.info("Please upload an image file to get a prediction.")
+    st.info("Please upload an image file to begin.")
