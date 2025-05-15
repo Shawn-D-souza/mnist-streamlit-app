@@ -20,7 +20,7 @@ def load_model():
 # Load the model when the app starts
 model = load_model()
 
-st.title("Handwritten Digit Recognizer with Manual Crop")
+st.title("Handwritten Digit Recognizer")
 st.write("Upload an image, crop the digit using the interactive box, and get a prediction.")
 
 uploaded_file = st.file_uploader("Choose an image...", type=["png", "jpg", "jpeg"])
